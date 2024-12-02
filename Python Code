@@ -9,24 +9,24 @@ from torchvision import transforms
 
 class SceneUnderstanding:
     def __init__(self):
-        # Initialize YOLO models for detection and segmentation
-        self.det_model = YOLO('yolov8n.pt')  # Detection model
-        self.seg_model = YOLO('yolov8n-seg.pt')  # Segmentation model
+      
+        self.det_model = YOLO('yolov8n.pt')  
+        self.seg_model = YOLO('yolov8n-seg.pt')  
         
-        # Initialize MiDaS for depth estimation
+       
         self.depth_model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small")
         self.depth_model.eval()
         if torch.cuda.is_available():
             self.depth_model.to('cuda')
             
-        # Transform for depth estimation
+       
         self.depth_transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
                               std=[0.229, 0.224, 0.225])
         ])
         
-        # Define colors for visualization
+        
         self.colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), 
                       (255, 255, 0), (0, 255, 255), (255, 0, 255),
                       (128, 0, 0), (0, 128, 0), (0, 0, 128)]
@@ -36,30 +36,30 @@ class SceneUnderstanding:
 
 
     def create_segmentation_overlay(self, frame, results):
-        # Create empty overlay
+       
         overlay = np.zeros_like(frame)
         
-        # Process each detected instance
+        
         if hasattr(results[0], 'masks') and results[0].masks is not None:
             for i, mask in enumerate(results[0].masks.data):
-                # Get class information
+                
                 box = results[0].boxes.data[i]
                 class_id = int(box[5])
                 class_name = self.seg_model.names[class_id]
                 
-                # Convert mask to numpy
+                
                 mask = mask.cpu().numpy()
                 color = self.get_color(i)
                 
-                # Create colored mask
+               
                 colored_mask = np.zeros_like(frame)
                 colored_mask[mask > 0.5] = color
                 
-                # Add to overlay
+              
                 overlay = cv2.addWeighted(overlay, 1, colored_mask, 0.5, 0)
                 
-                # Add class label
-                # Find mask centroid for text placement
+                
+              
                 moments = cv2.moments(mask.astype(np.uint8))
                 if moments["m00"] != 0:
                     cx = int(moments["m10"] / moments["m00"])
@@ -72,17 +72,16 @@ class SceneUnderstanding:
 
     
     def process_frame(self, frame):
-        # Get frame dimensions
+        
         height, width = frame.shape[:2]
         
-        # Object Detection and Segmentation
+        
         det_results = self.det_model(frame)[0]
         seg_results = self.seg_model(frame)
         
-        # Create segmentation overlay
+      
         seg_overlay = self.create_segmentation_overlay(frame, seg_results)
         
-        # Depth Estimation
         depth_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         depth_frame = torch.from_numpy(depth_frame).float()
         depth_frame = depth_frame.permute(2, 0, 1)
@@ -99,32 +98,32 @@ class SceneUnderstanding:
                                     align_corners=False)
             depth_map = depth_map.squeeze().cpu().numpy()
             
-        # Normalize depth map for visualization
+       
         depth_map = (depth_map - depth_map.min()) / (depth_map.max() - depth_map.min())
         depth_map = (depth_map * 255).astype(np.uint8)
         depth_map = cv2.applyColorMap(depth_map, cv2.COLORMAP_PLASMA)
         
-        # Process detections and estimate distances
+       
         results_frame = frame.copy()
         for i, detection in enumerate(det_results.boxes.data.tolist()):
             x1, y1, x2, y2, confidence, class_id = detection
             
-            # Convert coordinates to integers
+           
             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
             
-            # Get class name
+            
             class_name = self.det_model.names[int(class_id)]
             
-            # Calculate relative distance using depth map
+            
             roi_depth = depth_map[y1:y2, x1:x2]
             avg_depth = np.mean(roi_depth)
             relative_dist = f"{avg_depth:.2f}m"
             
-            # Draw bounding box with color from our palette
+          
             color = self.get_color(i)
             cv2.rectangle(results_frame, (x1, y1), (x2, y2), color, 2)
             
-            # Add label with class and distance
+            
             label = f"{class_name}: {relative_dist}"
             cv2.putText(results_frame, label, (x1, y1-10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
@@ -132,7 +131,7 @@ class SceneUnderstanding:
         return results_frame, depth_map, seg_overlay
 
 def main():
-    # Initialize camera
+    
     cap = cv2.VideoCapture(0)
     scene_understanding = SceneUnderstanding()
     
@@ -141,13 +140,13 @@ def main():
         if not ret:
             break
             
-        # Process frame
+      
         results_frame, depth_map, seg_overlay = scene_understanding.process_frame(frame)
         
-        # Combine original frame with segmentation overlay
+    
         segmentation_view = cv2.addWeighted(frame, 0.7, seg_overlay, 0.3, 0)
         
-        # Display results
+      
         cv2.imshow('Object Detection & Distance', results_frame)
         cv2.imshow('Depth Map', depth_map)
         cv2.imshow('Segmentation', segmentation_view)
