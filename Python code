@@ -19,44 +19,49 @@ class SceneUnderstanding:
         if torch.cuda.is_available():
             self.depth_model.to('cuda')
             
-       
-        self.depth_transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                              std=[0.229, 0.224, 0.225])
-        ])
+          if matches:
+                # Convert all measurements to mm
+                w = self.convert_to_mm(float(matches[0][0]), matches[0][1])
+                h = self.convert_to_mm(float(matches[0][2]), matches[0][3])
+                l = self.convert_to_mm(float(matches[0][4]), matches[0][5])
+                return (w, h, l)
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error searching dimensions for {object_name}: {str(e)}")
+            return None
+    
+    def process_frame(self, frame):
+        """Process a single frame for object detection"""
+        # Convert frame to PIL Image
+        pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         
+        # DETR detection
+        inputs = self.processor(images=pil_image, return_tensors="pt")
+        outputs = self.model(**inputs)
         
-        self.colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), 
-                      (255, 255, 0), (0, 255, 255), (255, 0, 255),
-                      (128, 0, 0), (0, 128, 0), (0, 0, 128)]
+        # Post-process DETR outputs
+        target_sizes = torch.tensor([pil_image.size[::-1]])
+        results = self.processor.post_process_object_detection(outputs, target_sizes=target_sizes)[0]
         
-    def get_color(self, idx):
-        return self.colors[idx % len(self.colors)]
-
-
-    def create_segmentation_overlay(self, frame, results):
-       
-        overlay = np.zeros_like(frame)
+        detected_objects = []
         
-        
-        if hasattr(results[0], 'masks') and results[0].masks is not None:
-            for i, mask in enumerate(results[0].masks.data):
+        # Process DETR detections
+        for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+            if score > 0.7:  # Confidence threshold
+                box = [round(i) for i in box.tolist()]
+                category = self.model.config.id2label[label.item()]
                 
-                box = results[0].boxes.data[i]
-                class_id = int(box[5])
-                class_name = self.seg_model.names[class_id]
+                # Update counter for this category
+                self.object_counts[category] += 1
+                object_name = f"{category} {self.object_counts[category]}"
                 
-                
-                mask = mask.cpu().numpy()
-                color = self.get_color(i)
-                
-               
-                colored_mask = np.zeros_like(frame)
-                colored_mask[mask > 0.5] = color
-                
-              
-                overlay = cv2.addWeighted(overlay, 1, colored_mask, 0.5, 0)
+                detected_objects.append({
+                    'name': object_name,
+                    'box': box,
+                    'is_human': category in ['person', 'face']
+                })
                 
                 
               
